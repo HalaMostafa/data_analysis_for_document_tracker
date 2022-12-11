@@ -1,12 +1,16 @@
-from data_processing import dataProcessing
-
+import httpagentparser
+import matplotlib.pyplot as plt
+import numpy as np
+from pandas import json_normalize
+from tkinter import messagebox
+from charts import *
 
 
 class documentTrackerAnalysis:
-    def __init__(self,userId:str,documentId:str,df):
+    def __init__(self,df, userId:str,documentId:str,):
         self.userId = userId
         self.documentId = documentId
-        self.df= df
+        self.df = df
         self.country_to_continent = {
             'AF': 'Asia',
             'AX': 'Europe',
@@ -258,49 +262,31 @@ class documentTrackerAnalysis:
             'ZM': 'Africa',
             'ZW': 'Africa'
         }
-        self.possibleMessages = {
-            "noAlsoLikeData":"Readers of this document don't read other documents",
-        }
-    def checkDocumentIdStatus(self,display,fileName):
-        """checks if document id exist in the file
-        """
-        if self.documentId not in list(self.df["env_doc_id"].unique()):
-            display.log("can't find"+self.documentId+"in"+fileName)
-            return False
-        else:
-            return True
 
-    def checkUserIdStatus(self,display,fileName):
-        """checks if user id exist in the file
-        """
-        if self.userId not in list(self.df["visitor_uuid"].unique()):
-            display.log("can't find"+self.userId+"in"+fileName)
-            return False
-        else:
-            return True
-
-
-    def getViewsByCountryContinents(self,countcolumn:str):
+    def getViewsByCountryContinents(self,countcolumn:str,messagebox=messagebox):
         """analyse, for a given document, from which countries and
         continents the document has been viewed
         - Args:
             - countcolumn:(string)  country or continent
         - return pandas series 
         """
+        #check if doc id is valid
+        if len(self.documentId) == 0:
+            messagebox.showinfo("Warning","Enter the Subject Document ID")
+        else:    
+            try:
         #filter df by document id self.df["env_doc_id"]
-        filtereddf = self.df[self.df["env_doc_id"]==self.documentId]
-        if countcolumn == "country":
-            # create country column to groupby it 
-            filtereddf["country"] = filtereddf["visitor_country"].apply(lambda x:self.country_to_continent[x])
-            count = filtereddf["country"].value_counts()
-        elif countcolumn =="continent":
-            count = filtereddf["visitor_country"].value_counts()
-        return count
-
-    # def getViewsByBrowser(self):
-    #     """examine the visitor useragent field and count the number of
-    #     occurrences for each value in the input file.
-    #     """
+                filtereddf = self.df[self.df["env_doc_id"]==self.documentId]
+                if countcolumn == "country":
+                    # create country column to groupby it 
+                    filtereddf["country"] = filtereddf["visitor_country"].apply(lambda x:self.country_to_continent[x])
+                    count = filtereddf["country"].value_counts()
+                elif countcolumn =="continent":
+                    count = filtereddf["visitor_country"].value_counts()
+                # return count
+                return createHistogram(x_Axis=list(count.index),y_axis=list(count),x_label=countcolumn,y_label="Count",title="Views By Country\Contenient")
+            except Exception:
+                messagebox.showinfo("wARNING","Enter a valid Subject Document Id") ##EDIT THIS LINE
 
     def getTopTenUsers(self):
         """For each user, the total time spent reading documents. The top 10 readers,
@@ -309,34 +295,62 @@ class documentTrackerAnalysis:
             -df[['visitor_uuid','event_readtime']]
         - return list of to 10 user ids whose spent most time 
         """
-        readEvent = self.df[self.df['env_type']=='reader']
+        readEvent = self.df.loc[self.df['env_type']=='reader'].copy()
         readTimePerUser = readEvent.groupby('visitor_uuid')['event_readtime'].sum().sort_values(ascending=False)
-        topTen = readTimePerUser.iloc[:10]
-        return list(topTen.index)
+        topTen =  readTimePerUser.iloc[:10] #topTen
+        return createHistogram(x_Axis=list(topTen.index),y_axis=list(topTen),x_label="User ID",y_label="Total Reading Time",title="Top Ten Users",rotate=True)
 
-    def getReaders(self):
-        """In order to calculate Also Likes
-        this function  will do the first taske
-        it will returns list of all visitor UUIDs of readers of given document
-        """
-        return list(self.df["visitor_uuid"][self.df["env_doc_id"] == self.documentId].unique())
 
-    def getDocuments(self):
-        """returns all document UUIDs that have been read by each given visitor.
+    
+    # GET VIEWS BY BROWSER:
+    def getBrowesrData(self):
+        """return pandas data frame contains all browser informations from userAgent
+        the df will contain the followwing columns:
+        ['bot', 'platform.name', 'platform.version', 'os.name', 'os.version',
+       'browser.name', 'browser.version', 'dist.name', 'dist.version',
+       'flavor.name', 'flavor.version']
         """
-        users = self.getReaders() #list of all usersIds who had the given documentId
-        filteredDf = self.df[(self.df["visitor_uuid"].isin(users))&(self.df["env_doc_id"]!=self.documentId)]#other documents had been read by specific users
-        return filteredDf.groupby('env_doc_id')['visitor_uuid'].value_counts().reset_index(name= "count").drop(columns = ["count"])
+        browser = self.df["visitor_useragent"].apply(lambda x: httpagentparser.detect(x))
+        return json_normalize(data =browser)
 
-    def sortDocuments(self,N=10):
-        """return a list of “liked” documents,
-        sorted by the sorting function parameter
-        - Args:
-            -   N (int) top N documents default 10
+    def get_full_browser(self):
         """
-        documentToReaders = self.getDocuments()
-        if  len(documentToReaders)!=0:# check if there is no also likes
-            # count reader per document to get the top N (top10)
-            documentcount = documentToReaders.groupby("env_doc_id")["env_doc_id"].count().reset_index(name="docCount")
-            documentToReaders = documentToReaders.merge(documentcount, how="left", on="env_doc_id").sort_values(by="docCount",ascending = False)
-        return documentToReaders.head(N)#get top 10 documnets
+        browser by version
+        """
+        browesrData =  self.getBrowesrData()
+        browesrData["browserNameVersion"] = browesrData["browser.name"]+browesrData["browser.version"]
+        browsercount = browesrData["browserNameVersion"].value_counts()
+        browsercount = browsercount.iloc[:10]
+        # return browsercount
+        return createHistogram(x_Axis=list(browsercount.index),y_axis=list(browsercount),x_label="Browser Name",y_label="Browser Count",title="Top Ten Browser Per Version Count",rotate=True)
+    #Getting full browser list without any splitting                    
+    def get_browser(self):
+        """get views by Browser
+        """
+        browesrData =  self.getBrowesrData()
+        browsercount = browesrData["browser.name"].dropna().value_counts()
+
+        return createHistogram(
+            x_Axis=list(browsercount.index),
+            y_axis=list(browsercount),
+            x_label="Browser Name",
+            y_label="Browser Count",
+            title="Browser Count",rotate=True)
+    
+
+    def getOSPerBrowser(self):
+        """ get Operating system used by reader
+        """
+        browesrData =  self.getBrowesrData()
+        osPerBrowser = browesrData.groupby("browser.name")["os.name"].value_counts().unstack().fillna(0).reset_index()
+        #drop columns contain zero values
+        colsToDrop = [col for col in osPerBrowser.columns if col != "browser.name" and sum(osPerBrowser[col]) == 0]
+        osPerBrowser = osPerBrowser.drop(columns=colsToDrop)
+        osPerBrowser.plot(x="browser.name",kind='bar',stacked=True,title='Operating System Per Browser',legend=True)
+        plt.xticks(rotation = 90)
+        plt.tight_layout()
+        plt.grid(True,axis='y')
+        plt.show()
+
+        
+
